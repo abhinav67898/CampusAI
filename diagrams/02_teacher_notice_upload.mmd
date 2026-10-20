@@ -1,0 +1,42 @@
+flowchart TD
+    classDef client fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px,color:#1e3a8a;
+    classDef api fill:#f3e8ff,stroke:#7e22ce,stroke-width:2px,color:#4c1d95;
+    classDef db fill:#dcfce7,stroke:#15803d,stroke-width:2px,color:#14532d;
+    classDef check fill:#fef3c7,stroke:#b45309,stroke-width:2px,color:#78350f;
+    classDef err fill:#fee2e2,stroke:#b91c1c,stroke-width:2px,color:#7f1d1d;
+
+    Start(["Teacher Fills Notice Form"]):::client --> PostNotice["POST /api/teacher/notices\n(multipart/form-data:\ntitle, body, category, audience,\neffectiveFrom, expiresAt, file?)"]:::client
+    PostNotice --> AuthCheck{"requireAuth &\nrequireRole('teacher')"}:::check
+    AuthCheck -- "No Session" --> Err401["401 Unauthorized"]:::err
+    AuthCheck -- "Student Role" --> Err403["403 Forbidden"]:::err
+    AuthCheck -- "Teacher OK" --> ValidateMeta{"Validate Fields:\ntitle, category, audience,\neffectiveFrom < expiresAt"}:::check
+    ValidateMeta -- "Invalid" --> Err400["400 Bad Request\n(Field Validation Details)"]:::err
+    ValidateMeta -- "Valid" --> HasFile{"File Attached?"}:::check
+
+    HasFile -- "No" --> BodyPresent{"Body Text >= 10 chars?"}:::check
+    BodyPresent -- "No" --> Err400
+    BodyPresent -- "Yes" --> CalcWindow
+
+    HasFile -- "Yes" --> CheckSize{"File Size <= 5MB?"}:::check
+    CheckSize -- "No" --> Err413["413 Payload Too Large"]:::err
+    CheckSize -- "Yes" --> CheckMime{"Allowed Extension & MIME?\n(.txt, .md, text-based .pdf)"}:::check
+    CheckMime -- "No" --> Err400_Type["400 Bad Request\n'Unsupported file format'"]:::err
+    CheckMime -- "Yes" --> SaveFile[("storageService.saveFile()\nWrite to Local Disk /uploads")]:::db
+    SaveFile --> SaveOK{"File Saved?"}:::check
+    SaveOK -- "No" --> Err500_Store["500 Internal Server Error\n(Storage Write Failed)"]:::err
+    SaveOK -- "Yes" --> ExtractText["Extract Text Content\n(UTF-8 read or pdf-parse)"]:::api
+    ExtractText --> ExtractOK{"Extraction Succeeded &\nText Non-Empty?"}:::check
+    ExtractOK -- "No (Corrupt/Scanned PDF)" --> Cleanup1[("Rollback: storageService.deleteFile()")]:::err
+    Cleanup1 --> Err422["422 Unprocessable Entity\n'Could not extract readable text'"]:::err
+
+    ExtractOK -- "Yes" --> CalcWindow["Compute Time Status:\nnow < effectiveFrom -> 'scheduled'\nnow >= expiresAt -> 'expired'\nelse -> 'active'"]:::api
+    CalcWindow --> CheckConflicts[("Query MongoDB notices:\nSame category + overlapping audience\n+ overlapping effective/expiry dates")]:::db
+    CheckConflicts --> OverlapFound{"Overlapping Active\nNotice Exists?"}:::check
+    OverlapFound -- "Yes" --> FlagNotice["Set conflictStatus = 'flagged_for_review'\nPopulate conflictingNoticeIds[]"]:::check
+    OverlapFound -- "No" --> CleanNotice["Set conflictStatus = 'none'"]:::api
+
+    FlagNotice & CleanNotice --> InsertDB[("MongoDB: notices.insertOne(\nmetadata + extractedText + status)")]:::db
+    InsertDB --> DBSuccess{"MongoDB Insert\nSucceeded?"}:::check
+    DBSuccess -- "No (DB Error)" --> Cleanup2[("Rollback: storageService.deleteFile()\nif file was uploaded")]:::err
+    Cleanup2 --> Err500_DB["500 Internal Server Error\n(No False Success Returned)"]:::err
+    DBSuccess -- "Yes" --> Ret201["201 Created\nReturn Notice Object + Conflict Warnings"]:::client

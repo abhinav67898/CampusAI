@@ -1,0 +1,29 @@
+flowchart TD
+    classDef client fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px,color:#1e3a8a;
+    classDef api fill:#f3e8ff,stroke:#7e22ce,stroke-width:2px,color:#4c1d95;
+    classDef db fill:#dcfce7,stroke:#15803d,stroke-width:2px,color:#14532d;
+    classDef ai fill:#ccfbf1,stroke:#0f766e,stroke-width:2px,color:#134e4a;
+    classDef check fill:#fef3c7,stroke:#b45309,stroke-width:2px,color:#78350f;
+    classDef err fill:#fee2e2,stroke:#b91c1c,stroke-width:2px,color:#7f1d1d;
+
+    StudentOpen(["Student Opens Portal"]):::client --> ListConvs["GET /api/conversations"]:::client
+    ListConvs --> Auth1{"requireAuth &\nrequireRole('student')"}:::check
+    Auth1 -- "OK" --> QueryConvs[("MongoDB: conversations.find(\n{ studentId: session.user.id })\n.sort({ updatedAt: -1 }).limit(30)")]:::db
+    QueryConvs --> RenderSidebar["Render Conversation Sidebar"]:::client
+
+    RenderSidebar --> ClickConv["Student Selects Conversation\nGET /api/conversations/:id/messages"]:::client
+    ClickConv --> VerifyOwner1[("MongoDB: conversations.findOne(\n{ _id: id, studentId: session.user.id })")]:::db
+    VerifyOwner1 --> IsOwner1{"Match Found?"}:::check
+    IsOwner1 -- "No (Other Student's ID or Missing)" --> Err404_1["404 Not Found\n(Prevents ID Enumeration)"]:::err
+    IsOwner1 -- "Yes" --> LoadMsgs[("MongoDB: messages.find({ conversationId: id })\n+ Populate/Lookup citedNoticeIds Metadata")]:::db
+    LoadMsgs --> DisplayThread["Render Message Thread + Historical Source Badges"]:::client
+
+    DisplayThread --> AskFollowUp["Student Sends Follow-up Question\nPOST /api/assistant/ask\n{ message, conversationId }"]:::client
+    AskFollowUp --> VerifyOwner2[("Verify conversation._id\nbelongs to session.user.id")]:::db
+    VerifyOwner2 --> IsOwner2{"Owned by Student?"}:::check
+    IsOwner2 -- "No" --> Err404_2["404 Not Found"]:::err
+    IsOwner2 -- "Yes" --> WindowContext[("Fetch Only Last 6 Messages (3 Turns)\nfrom messages Collection\n(Prevents Token Overflow)")]:::db
+    WindowContext --> RetrieveFresh[("Re-run Active Notice Retrieval\nusing Current Question + Recent Context\n(Ensures Newly Expired/Updated Notices are Respected)")]:::db
+    RetrieveFresh --> CallGemini["Call Gemini with Bounded History\n+ Fresh Active Notices"]:::ai
+    CallGemini --> SaveTurn[("Insert User Message & Assistant Reply\nUpdate conversations.updatedAt")]:::db
+    SaveTurn --> ReturnTurn["Return 200 OK with Updated Thread State"]:::client
