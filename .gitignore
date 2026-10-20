@@ -147,3 +147,21 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Dependencies
+node_modules/
+
+# Secrets & Environment Variables (NEVER COMMIT)
+.env
+.env.local
+.env.*.local
+
+# Local uploaded notice files (keep folder structure via .gitkeep)
+uploads/*
+!uploads/.gitkeep
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+npm-debug.log*
