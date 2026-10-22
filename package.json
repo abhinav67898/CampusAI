@@ -1,0 +1,25 @@
+{
+  "name": "campusai-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CampusAI REST API with MongoDB, Google Gmail read-only sync, and grounded Gemini answers",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "seed": "node scripts/seed.js",
+    "set-role": "node scripts/set-role.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "connect-mongo": "^5.1.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "express-session": "^1.18.1",
+    "helmet": "^8.0.0",
+    "mongoose": "^8.9.5",
+    "zod": "^3.24.1"
+  }
+}
