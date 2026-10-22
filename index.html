@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clarivo — Campus Intelligence</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <section id="authPage" class="auth-page">
+    <div class="auth-left">
+      <header class="brand">
+        <div class="brand-mark">C</div>
+        <div>
+          <div class="brand-name">CLARIVO</div>
+          <div class="brand-tag">CAMPUS INTELLIGENCE</div>
+        </div>
+      </header>
+
+      <p class="campus-label">Your campus. Your answers.</p>
+      <h1 id="authTitle">Welcome back!</h1>
+      <p class="intro">Access verified campus notices, source-based answers, and important academic updates in one place.</p>
+
+      <div class="role-area">
+        <p class="field-label">Continue as</p>
+        <div class="role-switch">
+          <button class="role-button active" data-role="Student" type="button">Student</button>
+          <button class="role-button" data-role="Teacher" type="button">Teacher</button>
+        </div>
+      </div>
+
+      <form id="authForm">
+        <label for="collegeId">College ID</label>
+        <input id="collegeId" type="text" placeholder="e.g. 2630btech656@kiet.edu" required>
+
+        <label for="password">Password</label>
+        <input id="password" type="password" placeholder="Enter your password" required>
+
+        <button class="main-button" id="loginButton" type="submit">Log in &gt;</button>
+      </form>
+
+      <div class="or-line"><span></span><b>or</b><span></span></div>
+      <button class="main-button signup-button" id="signupButton" type="button">Sign up &gt;</button>
+      <p class="auth-note" id="authMessage" aria-live="polite"></p>
+    </div>
+
+    <div class="auth-right">
+      <div class
