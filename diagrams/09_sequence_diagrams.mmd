@@ -1,0 +1,46 @@
+sequenceDiagram
+    autonumber
+    actor Teacher
+    actor Student
+    participant UI as Browser Portal (HTML/JS)
+    participant API as Express API & Middleware
+    participant Store as storageService (Local Disk)
+    participant DB as MongoDB Atlas
+    participant AI as Gemini API (gemini-2.5-flash)
+
+    rect rgb(243, 232, 255)
+    Note over Teacher,DB: Flow 1: Teacher Notice Upload (POST /api/teacher/notices)
+    Teacher->>UI: Fill notice form + attach schedule.pdf
+    UI->>API: POST /api/teacher/notices (multipart/form-data + Cookie)
+    API->>DB: Verify session & role === 'teacher'
+    API->>API: Validate dates (effectiveFrom < expiresAt), MIME, size <= 5MB
+    API->>Store: saveFile(buffer, 'schedule.pdf')
+    Store-->>API: Return storageKey
+    API->>API: Extract text from PDF & check date/category overlap
+    API->>DB: notices.insertOne({ metadata, extractedText, conflictStatus })
+    alt MongoDB Insert Fails
+        DB-->>API: Throw Write Error
+        API->>Store: deleteFile(storageKey) [Rollback]
+        API-->>UI: 500 Internal Server Error
+    else MongoDB Insert Succeeds
+        DB-->>API: Return insertedId
+        API-->>UI: 201 Created { notice, conflictWarning }
+        UI-->>Teacher: Display published notice & status badge
+    end
+    end
+
+    rect rgb(204, 251, 241)
+    Note over Student,AI: Flow 2: Student Question-to-Answer (POST /api/assistant/ask)
+    Student->>UI: Ask "When does the science exam start?"
+    UI->>API: POST /api/assistant/ask { message, conversationId }
+    API->>DB: Verify session (role === 'student') & conversation ownership
+    API->>DB: Fetch last 6 messages for conversationId
+    API->>DB: Query active notices (effectiveFrom <= now < expiresAt, audience match)
+    DB-->>API: Return matching notice documents + _ids
+    API->>AI: generateContent(systemInstruction + XML-wrapped notices + question)
+    AI-->>API: Return JSON { answer, citedNoticeIds, needsHumanConfirmation }
+    API->>API: Intersect citedNoticeIds with retrieved DB notice _ids
+    API->>DB: Insert student message + assistant message into messages collection
+    API-->>UI: 200 OK { answer, sources, conversationId, needsHumanConfirmation }
+    UI-->>Student: Render grounded answer + clickable Official Notice cards
+    end

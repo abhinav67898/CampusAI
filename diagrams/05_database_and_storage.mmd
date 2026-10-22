@@ -1,0 +1,38 @@
+flowchart TB
+    classDef client fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px,color:#1e3a8a;
+    classDef api fill:#f3e8ff,stroke:#7e22ce,stroke-width:2px,color:#4c1d95;
+    classDef db fill:#dcfce7,stroke:#15803d,stroke-width:2px,color:#14532d;
+    classDef check fill:#fef3c7,stroke:#b45309,stroke-width:2px,color:#78350f;
+    classDef err fill:#fee2e2,stroke:#b91c1c,stroke-width:2px,color:#7f1d1d;
+
+    subgraph BrowserStorage["Browser Client Storage (Untrusted Boundary)"]
+        LocalStore["window.localStorage\nONLY UI Preferences (theme: dark/light)\nNEVER passwords, tokens, chats, or files"]:::err
+    end
+
+    subgraph ExpressBackend["Express Backend Access Control & Services"]
+        DownloadRoute["GET /api/notices/:id/attachment\nRequires Authenticated Session\n+ Audience / Role Check"]:::check
+        StorageSvc["storageService Adapter\n- saveFile(buffer, meta)\n- getFileStream(storageKey)\n- deleteFile(storageKey)"]:::api
+    end
+
+    subgraph MongoAtlas["MongoDB Atlas Database (Structured Metadata & Text)"]
+        ColUsers[("Collection: users\n- _id: ObjectId\n- email: String (unique)\n- passwordHash: String\n- role: 'teacher' | 'student'\n- name: String\n- audienceGroup: String\n- isActive: Boolean")]:::db
+        ColNotices[("Collection: notices\n- _id: ObjectId\n- title, body, extractedText\n- category, targetAudience[]\n- effectiveFrom, expiresAt\n- status: 'published'|'superseded'|'archived'\n- conflictStatus, conflictingNoticeIds[]\n- version, supersedesId, supersededById\n- attachment: { fileName, mimeType, size, storageKey }\n- createdBy: ObjectId -> users._id")]:::db
+        ColConvs[("Collection: conversations\n- _id: ObjectId\n- studentId: ObjectId -> users._id (indexed)\n- title: String\n- createdAt, updatedAt: Date")]:::db
+        ColMsgs[("Collection: messages\n- _id: ObjectId\n- conversationId: ObjectId -> conversations._id\n- studentId: ObjectId -> users._id\n- sender: 'student' | 'assistant'\n- text: String\n- citedNoticeIds: ObjectId[] -> notices._id\n- needsHumanConfirmation: Boolean\n- createdAt: Date")]:::db
+        ColAudit[("Collection: auditLogs (Phase 2)\n- _id, actorId, action, targetId, timestamp")]:::db
+    end
+
+    subgraph PhysicalFiles["Physical Document Storage (Binary Files)"]
+        LocalFS[("Local Server Disk: /uploads\n(MVP Development Only - Ephemeral on Cloud)")]:::db
+        CloudFS[("Google Drive API / S3 Bucket\n(Phase 2 Production - Requires Service Account)")]:::db
+    end
+
+    ColUsers -->|"1 : Many (createdBy)"| ColNotices
+    ColUsers -->|"1 : Many (studentId)"| ColConvs
+    ColConvs -->|"1 : Many (conversationId)"| ColMsgs
+    ColMsgs -->|"References Verified IDs"| ColNotices
+
+    DownloadRoute -->|"1. Verify Access & Read storageKey"| ColNotices
+    DownloadRoute -->|"2. Stream File by storageKey"| StorageSvc
+    StorageSvc -->|"MVP Provider"| LocalFS
+    StorageSvc -.->|"Phase 2 Provider"| CloudFS

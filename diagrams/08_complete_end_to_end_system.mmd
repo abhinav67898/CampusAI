@@ -1,0 +1,33 @@
+flowchart TB
+    classDef client fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px,color:#1e3a8a;
+    classDef api fill:#f3e8ff,stroke:#7e22ce,stroke-width:2px,color:#4c1d95;
+    classDef db fill:#dcfce7,stroke:#15803d,stroke-width:2px,color:#14532d;
+    classDef ai fill:#ccfbf1,stroke:#0f766e,stroke-width:2px,color:#134e4a;
+    classDef check fill:#fef3c7,stroke:#b45309,stroke-width:2px,color:#78350f;
+    classDef err fill:#fee2e2,stroke:#b91c1c,stroke-width:2px,color:#7f1d1d;
+
+    Login(["1. Shared Login Entry\nPOST /api/auth/login"]):::client --> SessionDB[("MongoDB Session Store\nVerifies bcrypt Hash & Role")]:::db
+    SessionDB --> RoleGate{"GET /api/auth/me\nRole Router"}:::check
+
+    RoleGate -- "Teacher" --> T_Upload["2. Teacher Publishes Notice\nPOST /api/teacher/notices"]:::client
+    T_Upload --> T_Val{"Validate Fields, Dates,\nMIME & Size <= 5MB"}:::check
+    T_Val -- "Invalid" --> Err_T["400 / 413 / 422 Error\n+ Cleanup Temp File"]:::err
+    T_Val -- "Valid" --> T_Save[("Save File via storageService\n+ Extract Text + Check Conflicts\n+ Insert into MongoDB notices")]:::db
+
+    RoleGate -- "Student" --> S_Ask["3. Student Asks Question\nPOST /api/assistant/ask"]:::client
+    S_Ask --> S_History[("Verify Conversation Ownership\n& Load Last 6 Messages")]:::db
+    S_History --> S_Retrieve[("4. Retrieve Active Notices\n(effectiveFrom <= now < expiresAt,\nstatus='published', audience match)")]:::db
+    T_Save -->|"Indexed in MongoDB"| S_Retrieve
+
+    S_Retrieve --> S_Check{"Adequate Unconflicted\nNotices Found?"}:::check
+    S_Check -- "No / Flagged Conflict" --> S_Abstain["Safe Refusal / Staff Referral\nneedsHumanConfirmation: true"]:::err
+    S_Check -- "Yes" --> S_Gemini["5. Grounded Gemini Call\n(gemini-2.5-flash + JSON Schema)"]:::ai
+    S_Gemini --> S_CiteAudit{"6. Verify Citations\nAgainst Retrieved IDs"}:::check
+    S_CiteAudit --> S_Persist[("7. Save Turn & Verified Citations\nto MongoDB messages")]:::db
+    S_Abstain --> S_Persist
+    S_Persist --> S_Render["Student Views Answer,\nSource Cards & Follow-up Box"]:::client
+
+    T_Save --> ConflictFlag{"Overlap Detected?"}:::check
+    ConflictFlag -- "Yes" --> T_Review["8. Teacher Views Conflict Queue\nGET /api/teacher/notices?conflict=flagged"]:::client
+    T_Review --> T_Resolve["9. Teacher Resolves Conflict\nPATCH /api/teacher/notices/:id/resolve\n(Supersedes Old or Marks Co-exist)"]:::api
+    T_Resolve -->|"Updates Notice Status"| S_Retrieve

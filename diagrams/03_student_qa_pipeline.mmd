@@ -1,0 +1,43 @@
+flowchart TD
+    classDef client fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px,color:#1e3a8a;
+    classDef api fill:#f3e8ff,stroke:#7e22ce,stroke-width:2px,color:#4c1d95;
+    classDef db fill:#dcfce7,stroke:#15803d,stroke-width:2px,color:#14532d;
+    classDef ai fill:#ccfbf1,stroke:#0f766e,stroke-width:2px,color:#134e4a;
+    classDef check fill:#fef3c7,stroke:#b45309,stroke-width:2px,color:#78350f;
+    classDef err fill:#fee2e2,stroke:#b91c1c,stroke-width:2px,color:#7f1d1d;
+
+    Start(["Student Submits Question"]):::client --> AskAPI["POST /api/assistant/ask\n{ message, conversationId? }"]:::client
+    AskAPI --> AuthCheck{"requireAuth &\nrequireRole('student')"}:::check
+    AuthCheck -- "Fail" --> ErrAuth["401 Unauthorized / 403 Forbidden"]:::err
+    AuthCheck -- "OK" --> ValRate{"Validate Message (1..500 chars)\n& Rate Limit (<= 20 req / 5m)"}:::check
+    ValRate -- "Fail" --> ErrVal["400 Bad Request / 429 Too Many Requests"]:::err
+    ValRate -- "OK" --> HasConv{"conversationId\nProvided?"}:::check
+
+    HasConv -- "Yes" --> LoadConv[("MongoDB: Verify conversation._id\nAND studentId === session.user.id")]:::db
+    LoadConv --> ConvOwned{"Found & Owned\nby Student?"}:::check
+    ConvOwned -- "No" --> Err404["404 Not Found\n(Blocks Cross-Student Access)"]:::err
+    ConvOwned -- "Yes" --> LoadHistory[("Load Last 6 Messages\nfor Follow-up Context")]:::db
+
+    HasConv -- "No" --> CreateConv[("MongoDB: Create New Conversation\n{ studentId, title, createdAt }")]:::db
+    CreateConv --> LoadHistory
+
+    LoadHistory --> RetrieveNotices[("MongoDB: Find Notices where\nstatus='published', effectiveFrom <= now,\nexpiresAt > now, audience in ['all', student.grade],\nconflictStatus != 'unresolved_conflict'")]:::db
+    RetrieveNotices --> CheckResults{"Relevant Active\nNotices Found?"}:::check
+    CheckResults -- "0 Notices Found" --> FallbackNoSource["Skip Gemini or Return Abstention:\nanswer: 'No active official notice found.\nPlease check with the school office.'\nsources: [], needsHumanConfirmation: true"]:::err
+
+    CheckResults -- ">= 1 Notices" --> HasFlagged{"Any Retrieved Notice\n'flagged_for_review'?"}:::check
+    HasFlagged -- "Yes" --> FallbackConflict["Return Safe Conflict Abstention:\n'Multiple notices with differing details are under\nreview. Please confirm with school staff.'\nneedsHumanConfirmation: true"]:::check
+
+    HasFlagged -- "No" --> BuildPrompt["Assemble Bounded Prompt:\nSystem Rules + Untrusted Notice Excerpts\n(wrapped in XML tags with Notice IDs)\n+ Recent Chat History + Student Question"]:::api
+    BuildPrompt --> CallGemini["Call Gemini API (gemini-2.5-flash)\nwith Structured JSON Schema & 15s Timeout"]:::ai
+    CallGemini --> GeminiOK{"API Call Succeeded\n& Valid JSON?"}:::check
+    GeminiOK -- "Timeout / 5xx / Quota" --> Err503["503 Service Unavailable\n'Assistant temporarily unavailable.\nPlease contact reception.'"]:::err
+    GeminiOK -- "Malformed JSON" --> Err502["502 Bad Gateway\nReturn Safe Fallback Message"]:::err
+
+    GeminiOK -- "Valid JSON" --> VerifyCitations{"Filter model citedNoticeIds:\nKeep ONLY IDs present in\nRetrieved Notice Set"}:::check
+    VerifyCitations --> SaveTurns[("MongoDB: Insert User Message &\nAssistant Message (with verified sourceIds)\ninto messages Collection")]:::db
+    FallbackNoSource & FallbackConflict --> SaveTurns
+    SaveTurns --> SaveOK{"DB Write OK?"}:::check
+    SaveOK -- "No" --> Err500["500 Internal Server Error"]:::err
+    SaveOK -- "Yes" --> ReturnJSON["200 OK\n{ answer, sources, conversationId,\nneedsHumanConfirmation }"]:::api
+    ReturnJSON --> RenderUI["Student UI Renders Answer,\nVerified Source Cards & Follow-up Input"]:::client

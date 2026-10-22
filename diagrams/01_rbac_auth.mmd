@@ -1,0 +1,38 @@
+flowchart TD
+    classDef client fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px,color:#1e3a8a;
+    classDef api fill:#f3e8ff,stroke:#7e22ce,stroke-width:2px,color:#4c1d95;
+    classDef db fill:#dcfce7,stroke:#15803d,stroke-width:2px,color:#14532d;
+    classDef check fill:#fef3c7,stroke:#b45309,stroke-width:2px,color:#78350f;
+    classDef err fill:#fee2e2,stroke:#b91c1c,stroke-width:2px,color:#7f1d1d;
+
+    Start(["User Opens Login UI"]):::client --> SubmitLogin["POST /api/auth/login\n{ email, password }"]:::client
+    SubmitLogin --> RateLimit{"Rate Limit OK?\n(<= 10 req / 15m)"}:::check
+    RateLimit -- "No" --> Err429["429 Too Many Requests"]:::err
+    RateLimit -- "Yes" --> ValInput{"Valid Email &\nNon-empty Password?"}:::check
+    ValInput -- "No" --> Err400["400 Bad Request"]:::err
+    ValInput -- "Yes" --> NormEmail["Normalize Email\n(trim + toLowerCase)"]:::api
+    NormEmail --> FindUser[("MongoDB: users.findOne({ email })\n& isActive: true")]:::db
+    FindUser --> UserExists{"User Found?"}:::check
+    UserExists -- "No" --> DummyHash["Run Dummy bcrypt.compare\n(Timing Attack Defense)"]:::check
+    DummyHash --> Err401["401 Unauthorized\n'Invalid email or password'"]:::err
+    UserExists -- "Yes" --> CheckHash{"bcrypt.compare(\npassword, passwordHash)"}:::check
+    CheckHash -- "False" --> Err401
+    CheckHash -- "True" --> CreateSess[("Regenerate Session &\nSave { id, role, name, audience }\nto MongoDB sessions")]:::db
+    CreateSess --> SetCookie["Return 200 OK + Set-Cookie\n(httpOnly, sameSite=lax)"]:::api
+    SetCookie --> CheckMe["Client Calls GET /api/auth/me"]:::client
+    CheckMe --> SessValid{"Valid Session\nin MongoDB?"}:::check
+    SessValid -- "No" --> Err401_Me["401 Unauthorized\nRedirect to Login"]:::err
+    SessValid -- "Yes" --> RoleBranch{"Server Session Role?"}:::check
+    RoleBranch -- "role === 'teacher'" --> TeacherPortal["Render Teacher Portal\n(Upload, Review Conflicts, Manage)"]:::client
+    RoleBranch -- "role === 'student'" --> StudentPortal["Render Student Portal\n(Ask Assistant, View Sources, History)"]:::client
+
+    TeacherPortal & StudentPortal --> ProtectedReq["Request Protected Endpoint\ne.g. POST /api/teacher/notices"]:::client
+    ProtectedReq --> MW_Auth{"requireAuth:\nreq.session.user exists?"}:::check
+    MW_Auth -- "No" --> Err401_MW["401 Unauthorized"]:::err
+    MW_Auth -- "Yes" --> MW_Role{"requireRole:\nSession role matches route?"}:::check
+    MW_Role -- "No (Role Mismatch)" --> Err403["403 Forbidden\n'Insufficient permissions'"]:::err
+    MW_Role -- "Yes" --> AllowRoute["Proceed to Route Controller"]:::api
+
+    TeacherPortal & StudentPortal --> LogoutBtn["User Clicks Logout\nPOST /api/auth/logout"]:::client
+    LogoutBtn --> DestroySess[("req.session.destroy() in MongoDB\n& clearCookie('chaos.sid')")]:::db
+    DestroySess --> LogoutOK["200 OK -> Redirect to Login UI"]:::client

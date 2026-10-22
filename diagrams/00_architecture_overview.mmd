@@ -1,0 +1,43 @@
+flowchart LR
+    classDef client fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px,color:#1e3a8a;
+    classDef api fill:#f3e8ff,stroke:#7e22ce,stroke-width:2px,color:#4c1d95;
+    classDef db fill:#dcfce7,stroke:#15803d,stroke-width:2px,color:#14532d;
+    classDef ai fill:#ccfbf1,stroke:#0f766e,stroke-width:2px,color:#134e4a;
+    classDef check fill:#fef3c7,stroke:#b45309,stroke-width:2px,color:#78350f;
+    classDef err fill:#fee2e2,stroke:#b91c1c,stroke-width:2px,color:#7f1d1d;
+
+    subgraph Browser["Browser Client (Single Origin, No Secrets)"]
+        UI_Login["Login Page (HTML/JS)"]:::client
+        UI_Teacher["Teacher Portal UI"]:::client
+        UI_Student["Student Portal UI"]:::client
+        UI_Local["Browser localStorage\n(UI Theme Only - NO Secrets/Chats)"]:::check
+    end
+
+    subgraph Server["Node.js + Express Backend (Accesses .env Secrets)"]
+        Static["Express Static Middleware"]:::api
+        AuthMW["Session & Role Middleware\n(requireAuth / requireRole)"]:::check
+        Routes["REST API Controllers\n(/api/auth, /api/teacher, /api/assistant)"]:::api
+        StorageAdapter["storageService Interface"]:::api
+        AIAdapter["aiProvider Interface"]:::api
+        Env[(".env Secrets\nMONGODB_URI\nGEMINI_API_KEY\nSESSION_SECRET")]:::err
+    end
+
+    subgraph External["Data, Storage & AI Providers"]
+        Mongo[("MongoDB Atlas\n(users, notices, conversations,\nmessages, sessions)")]:::db
+        LocalDisk[("Local Disk /uploads\n(MVP Dev Storage)")]:::db
+        GDrive[("Google Drive / S3\n(Phase 2 Cloud Storage)")]:::db
+        Gemini["Google Gemini API\n(gemini-2.5-flash)"]:::ai
+    end
+
+    UI_Login & UI_Teacher & UI_Student <-->|"HTTPS + httpOnly Session Cookie"| Static
+    UI_Login & UI_Teacher & UI_Student <-->|"JSON / Multipart API Calls"| AuthMW
+    UI_Student -.->|"Reads/Writes Theme Only"| UI_Local
+    AuthMW --> Routes
+    Env -.->|"Injected at Startup"| AuthMW & Routes & AIAdapter
+    AuthMW <-->|"Verify Session"| Mongo
+    Routes <-->|"CRUD Queries (Official Driver)"| Mongo
+    Routes --> StorageAdapter
+    StorageAdapter -->|"MVP"| LocalDisk
+    StorageAdapter -.->|"Phase 2"| GDrive
+    Routes --> AIAdapter
+    AIAdapter <-->|"Server-to-Server HTTPS"| Gemini

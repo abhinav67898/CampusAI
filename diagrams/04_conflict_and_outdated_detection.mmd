@@ -1,0 +1,27 @@
+flowchart TD
+    classDef client fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px,color:#1e3a8a;
+    classDef api fill:#f3e8ff,stroke:#7e22ce,stroke-width:2px,color:#4c1d95;
+    classDef db fill:#dcfce7,stroke:#15803d,stroke-width:2px,color:#14532d;
+    classDef check fill:#fef3c7,stroke:#b45309,stroke-width:2px,color:#78350f;
+    classDef err fill:#fee2e2,stroke:#b91c1c,stroke-width:2px,color:#7f1d1d;
+
+    NewNotice(["New or Updated Notice Saved"]):::api --> EvalTime{"Compare Current Server Time (now)\nwith effectiveFrom & expiresAt"}:::check
+    EvalTime -- "now < effectiveFrom" --> StateFuture["Time Window: FUTURE (Scheduled)\nExcluded from Student Q&A"]:::check
+    EvalTime -- "now >= expiresAt" --> StateExpired["Time Window: EXPIRED (Archived)\nExcluded from Student Q&A"]:::err
+    EvalTime -- "effectiveFrom <= now < expiresAt" --> StateActive["Time Window: ACTIVE"]:::api
+
+    StateActive & StateFuture --> CheckOverlap[("Query MongoDB notices:\nSame category AND overlapping audience\nAND (existing.effectiveFrom < new.expiresAt)\nAND (existing.expiresAt > new.effectiveFrom)")]:::db
+    CheckOverlap --> OverlapExists{"Overlap with Another\nNon-Archived Notice?"}:::check
+    OverlapExists -- "No" --> MarkClean[("Set conflictStatus = 'none'\nEligible for Student Q&A when Active")]:::db
+
+    OverlapExists -- "Yes" --> SupersedeSpecified{"Did Teacher Explicitly\nSelect 'Supersedes Notice X'?"}:::check
+    SupersedeSpecified -- "Yes" --> ArchiveOld[("Transaction / Batch Update:\n1. Old Notice: status='superseded',\nsupersededBy=newNotice._id, version++\n2. New Notice: supersedes=oldNotice._id,\nconflictStatus='none'")]:::db
+
+    SupersedeSpecified -- "No" --> FlagBoth[("Flag for Human Review:\nSet conflictStatus='flagged_for_review'\non New Notice & Link conflictingNoticeIds\n(Do NOT let AI silently pick a winner)")]:::check
+    FlagBoth --> NotifyTeacher["Teacher Portal Shows Alert:\n'Potential Conflict Requires Review'"]:::client
+    NotifyTeacher --> TeacherAction{"Teacher Reviews Both Notices\nPATCH /api/teacher/notices/:id/resolve"}:::client
+    TeacherAction -- "Action: Supersede Old" --> ArchiveOld
+    TeacherAction -- "Action: Co-exist (No Real Conflict)" --> MarkResolved[("Set conflictStatus = 'resolved_coexist'\non Both Notices + Log Reviewer ID")]:::db
+    TeacherAction -- "Action: Archive New/Mistake" --> ArchiveMistake[("Set status = 'archived'\non Mistaken Notice")]:::db
+
+    MarkClean & ArchiveOld & MarkResolved --> StudentRetrieval["Student Retrieval Filter:\nstatus='published' AND effectiveFrom <= now\nAND expiresAt > now\nAND conflictStatus IN ['none', 'resolved_coexist']"]:::api
